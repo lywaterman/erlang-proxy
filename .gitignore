@@ -3,3 +3,5 @@
 *.beam
 *.dump
 config.hrl
+ebin/
+deps/

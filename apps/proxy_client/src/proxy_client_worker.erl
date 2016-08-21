@@ -83,6 +83,7 @@ init(Conf) ->
     Client = proplists:get_value(client_sock, Conf),
     case gen_tcp:connect(getaddr_or_fail(ServerIP), ServerPort, ?SOCK_OPTIONS) of
         {ok, RemoteSocket} ->
+            %%send to remote shadowsocks
             ok = inet:setopts(RemoteSocket, [{active, true}]),
             {ok, #state{server_ip=ServerIP,
                         server_port=ServerPort,
