@@ -92,6 +92,7 @@ function worker_init(pid)
         cipher = cipher,
         iv = cipher_iv,
         decipher = nil,
+        recv_data = '',
         create_decipher = function (self, iv)
             self.decipher = create_cipher('aes-256-cfb', 'Mima4123', false, iv)
         end
@@ -100,6 +101,26 @@ end
 
 function worker_terminate(pid)
     global_worker[pid] = nil
+end
+
+function append_data(pid, data)
+    local worker = global_worker[pid]
+
+    if worker == nil then
+        assert(false) 
+    end
+
+    worker.recv_data = worker.recv_data .. data
+end
+
+function get_recv_data(pid)
+     local worker = global_worker[pid]
+
+    if worker == nil then
+        assert(false) 
+    end
+
+    return worker.recv_data
 end
 
 
@@ -116,16 +137,25 @@ function send_data(pid, ssaddr, chunk)
     
     --if #cipherdata > 0 then
         if worker.send_iv then
+            print(pid, 'send no iv')
             return cipherdata
         else
             --local tt = create_cipher('aes-256-cfb', 'Mima4123', false, worker.iv)
             --print('after')
             --print(tt:update(cipherdata))
+            print(pid, 'send iv')
             worker.send_iv = true
             return worker.iv .. cipherdata
         end
     --end
 end
+
+function writefile(filename, info)  
+    local wfile=io.open(filename, "a")--写入文件(w覆盖)  
+    assert(wfile)           --打开时验证是否出错  
+    wfile:write(info)       --写入传入的内容  
+    wfile:close()           --调用结束后记得关闭  
+end  
 
 function recv_data(pid, chunk)
     local worker = global_worker[pid]
@@ -136,6 +166,7 @@ function recv_data(pid, chunk)
     if worker.decipher then
         chunk = worker.decipher:update(chunk)
         --if #chunk > 0 then return chunk end 
+        print(pid, 'has decipher') 
         return chunk
     else
         if #chunk >= 16 then
@@ -143,8 +174,11 @@ function recv_data(pid, chunk)
             if #chunk > 16 then
                 chunk = worker.decipher:update(chunk:sub(17, -1))
                 --if #chunk > 0 then return chunk end
+                print(pid, 'create decipher') 
                 return chunk
-            end
+            else
+                return ''
+            end 
         end
     end
 end
