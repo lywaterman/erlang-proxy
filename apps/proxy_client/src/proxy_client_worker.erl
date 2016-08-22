@@ -148,11 +148,14 @@ handle_info(timeout, #state{server_sock=RemoteSocket, client_sock=Client, client
 %    try
         case find_target(Client) of
             {ok, Mod, {connect, Addr}} ->
-                %%lager:debug("addr:~p", [Addr]),
+                lager:debug("addr:~p", [Addr]),
+                SSAddr = encode_addr(Addr),
+                %%{ok, Data} = moon:call(luavm, send_data, [pid_to_binary(self()), SSAddr, <<"">>]),
+                %%gen_tcp:send(RemoteSocket, [Data]),
                 ok = inet:setopts(Client, [{active, true}]),
                 IP = list_to_binary(tuple_to_list(getaddr_or_fail(LocalIP))),
                 ok = gen_tcp:send(Client, Mod:unparse_connection_response({granted, {ipv4, IP, LocalPort}})),
-                {noreply, State#state{ss_addr=encode_addr(Addr)}};
+                {noreply, State#state{ss_addr=SSAddr}};
             {error, client_closed} ->
                 {stop, normal, State};
             {error, Reason} ->
@@ -168,7 +171,7 @@ handle_info(timeout, #state{server_sock=RemoteSocket, client_sock=Client, client
     end;
 handle_info({tcp, Client, Request}, #state{server_sock=RemoteSocket, client_sock=Client, ss_addr=SSAddr} = State) ->
     {ok, Data} = moon:call(luavm, send_data, [pid_to_binary(self()), SSAddr, Request]),
-    lager:debug("send:~p", [Data]),
+    %%lager:debug("send:~p", [Data]),
     case gen_tcp:send(RemoteSocket, Data) of
         ok ->
             {noreply, State};
@@ -177,7 +180,7 @@ handle_info({tcp, Client, Request}, #state{server_sock=RemoteSocket, client_sock
     end;
 handle_info({tcp, RemoteSocket, Response}, #state{server_sock=RemoteSocket, client_sock=Client} = State) ->
     {ok, Data} = moon:call(luavm, recv_data, [pid_to_binary(self()), Response]),
-    lager:debug("response:~p", [Data]),
+    %%lager:debug("response:~p", [Data]),
     case gen_tcp:send(Client, Data) of
         ok ->
             {noreply, State};
