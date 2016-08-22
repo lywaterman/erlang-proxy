@@ -121,14 +121,14 @@ function get_recv_data(pid)
 end
 
 
-function send_data(pid, ssaddr, chunk)
+function send_data(pid, payload)
     local worker = global_worker[pid]
 
     if worker == nil then
         assert(false) 
     end
 
-    local cipherdata = worker.cipher:update(ssaddr .. chunk)
+    local cipherdata = worker.cipher:update(payload)
     cipherdata = cipherdata .. worker.cipher:final()
     --print('before')
     --print(ssaddr..chunk)

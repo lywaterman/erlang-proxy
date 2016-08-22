@@ -7,6 +7,10 @@
         accept/1,
         start_server/0]).
 
+-define(LUA_ROOT_MODULE, "lua/root.lua").
+-define(LUA_LOGIC_MODULE, "lua/shadowsocks.lua").
+
+
 
 -include("utils.hrl").
 
@@ -33,9 +37,43 @@
          {nodelay, true}
         ]).
 
+priv_dir() ->
+	Ebin = filename:dirname(code:which(?MODULE)),
+	filename:join(filename:dirname(Ebin), "priv").
 
+create_luavm() ->
+	PrivDir = priv_dir(),
+	RootLuaModule = filename:join(PrivDir, ?LUA_ROOT_MODULE),
+	LuaModule = filename:join(PrivDir, ?LUA_LOGIC_MODULE),
+    setup_logicvm_by_name(luavm,  RootLuaModule, LuaModule).
+
+reload_lua() ->
+  reload_logicvm_by_name(luavm).
+
+reload_logicvm_by_name(Name) ->
+    PrivDir = priv_dir(),
+    RootLuaModule = filename:join(PrivDir, ?LUA_ROOT_MODULE),
+    ok = moon:load(Name, RootLuaModule),
+
+    {ok, _} = moon:call(Name, "reload", []),
+
+	LuaModule = filename:join(PrivDir, ?LUA_LOGIC_MODULE),
+	ok = moon:load(Name, LuaModule).
+
+setup_logicvm_by_name(Name, RootLuaModule, LuaModule) ->
+    {ok, VMPid} = moon:start_vm(),
+    register(Name, VMPid),
+
+    ok = moon:load(VMPid, RootLuaModule),
+    {ok, _} = moon:call(Name, "set_lua_path", [erlang:list_to_binary(filename:join(priv_dir(), "lua/?.lua"))]),
+
+    moon:call(Name, "set_appenv", [application:get_all_env(), node()]),
+
+    ok = moon:load(VMPid, LuaModule).
 
 start() ->
+    lager:set_loglevel(lager_console_backend, debug),
+    create_luavm(),
     ConfFile = filename:join(code:priv_dir(proxy_server), "server.conf"),
     case file:consult(ConfFile) of
         {ok, Conf} ->
@@ -132,6 +170,7 @@ start_process() ->
 
 
 start_process(Client) ->
+    moon:call(luavm, worker_init, [pid_to_binary(self())]),
     case gen_tcp:recv(Client, 1) of
         {ok, Data} ->
             parse_address(Client, proxy_transform:transform(Data));
@@ -226,3 +265,6 @@ transfer(Client, Remote) ->
     gen_tcp:close(Remote),
     gen_tcp:close(Client),
     ok.
+
+pid_to_binary(Pid) ->
+    list_to_binary(pid_to_list(Pid)).

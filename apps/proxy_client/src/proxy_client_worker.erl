@@ -144,7 +144,7 @@ handle_cast(_Msg, State) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_info(timeout, #state{server_sock=RemoteSocket, client_sock=Client, client_ip=LocalIP, client_port=LocalPort} = State) ->
+handle_info(timeout, #state{server_sock=_, client_sock=Client, client_ip=LocalIP, client_port=LocalPort} = State) ->
 %    try
         case find_target(Client) of
             {ok, Mod, {connect, Addr}} ->
@@ -168,7 +168,7 @@ handle_info(timeout, #state{server_sock=RemoteSocket, client_sock=Client, client
     %%         {stop, normal, State}
     end;
 handle_info({tcp, Client, Request}, #state{server_sock=RemoteSocket, client_sock=Client, ss_addr=SSAddr} = State) ->
-    {ok, Data} = moon:call(luavm, send_data, [pid_to_binary(self()), SSAddr, Request]),
+    {ok, Data} = moon:call(luavm, send_data, [pid_to_binary(self()), encode_ss({SSAddr, Request})]),
     %%lager:debug("send:~p", [Data]),
     case gen_tcp:send(RemoteSocket, Data) of
         ok ->
@@ -178,9 +178,6 @@ handle_info({tcp, Client, Request}, #state{server_sock=RemoteSocket, client_sock
     end;
 handle_info({tcp, RemoteSocket, Response}, #state{server_sock=RemoteSocket, client_sock=Client} = State) ->
     {ok, Data} = moon:call(luavm, recv_data, [pid_to_binary(self()), Response]),
-    %%lager:debug("response:~p", [Data]),
-    %%moon:call(luavm, append_data, [pid_to_binary(self()), Data]),
-    %%{noreply, State};
     case gen_tcp:send(Client, Data) of
         ok ->
             {noreply, State};
@@ -194,8 +191,6 @@ handle_info({tcp_closed, ASocket}, #state{server_sock=RemoteSocket, client_sock=
             {stop, normal, State};
         RemoteSocket ->
             lager:debug("remote server tcp close"),
-            %%{ok, Data} = moon:call(luavm, get_recv_data, [pid_to_binary(self())]),
-            %%gen_tcp:send(Client, Data),
             {stop, normal, State}
     end;
 handle_info({tcp_error, ASocket, _Reason}, #state{server_sock=RemoteSocket, client_sock=Client} = State) ->
