@@ -83,12 +83,6 @@ end
 --cipher:update("12345")
 --decipher=nil
 
-function get_first_packet(ip, port)
-    local a, b, c, d = ip:match "^(%d+)%.(%d+)%.(%d+)%.(%d+)$"
-    a, b, c, d = tonumber(a), tonumber(b), tonumber(c), tonumber(d)
-    return cipher_iv .. cipher:update(schar(1, a, b, c, d, band(port, 0xFF00) / 0x100, band(port, 0xFF)))
-end
-
 global_worker = {}
 
 function worker_init(pid)
@@ -119,7 +113,8 @@ function send_data(pid, ssaddr, chunk)
     local cipherdata = worker.cipher:update(ssaddr .. chunk)
     --print('before')
     --print(ssaddr..chunk)
-    if #cipherdata > 0 then
+    
+    --if #cipherdata > 0 then
         if worker.send_iv then
             return cipherdata
         else
@@ -129,7 +124,7 @@ function send_data(pid, ssaddr, chunk)
             worker.send_iv = true
             return worker.iv .. cipherdata
         end
-    end
+    --end
 end
 
 function recv_data(pid, chunk)
@@ -140,13 +135,15 @@ function recv_data(pid, chunk)
 
     if worker.decipher then
         chunk = worker.decipher:update(chunk)
-        if #chunk > 0 then return chunk end 
+        --if #chunk > 0 then return chunk end 
+        return chunk
     else
         if #chunk >= 16 then
             worker:create_decipher(chunk:sub(1, 16))
             if #chunk > 16 then
                 chunk = worker.decipher:update(chunk:sub(17, -1))
-                if #chunk > 0 then return chunk end
+                --if #chunk > 0 then return chunk end
+                return chunk
             end
         end
     end

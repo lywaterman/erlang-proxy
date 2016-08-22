@@ -150,8 +150,6 @@ handle_info(timeout, #state{server_sock=RemoteSocket, client_sock=Client, client
             {ok, Mod, {connect, Addr}} ->
                 lager:debug("addr:~p", [Addr]),
                 SSAddr = encode_addr(Addr),
-                %%{ok, Data} = moon:call(luavm, send_data, [pid_to_binary(self()), SSAddr, <<"">>]),
-                %%gen_tcp:send(RemoteSocket, [Data]),
                 ok = inet:setopts(Client, [{active, true}]),
                 IP = list_to_binary(tuple_to_list(getaddr_or_fail(LocalIP))),
                 ok = gen_tcp:send(Client, Mod:unparse_connection_response({granted, {ipv4, IP, LocalPort}})),
