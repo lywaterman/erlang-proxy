@@ -21,8 +21,6 @@ function _G.print_r (t, name, indent)
   end
 
 
-module('shadowsocks', package.seeall)
-
 crypto=require 'crypto'
 
 local bxor, band, schar = (bit or bit32).bxor, (bit or bit32).band, string.char
@@ -82,11 +80,81 @@ function create_cipher(cipher, password, enc, iv)
     return method[3](cipher, key_, cipher_iv, enc), cipher_iv
 end
 
-local cipher, iv = create_cipher('aes-256-cfb', 'Mima4123', true)
-local chunk=cipher:update("12345")
+--cipher:update("12345")
+--decipher=nil
 
-local decipher = create_cipher('aes-256-cfb', 'Mima4123', false, iv)
+function get_first_packet(ip, port)
+    local a, b, c, d = ip:match "^(%d+)%.(%d+)%.(%d+)%.(%d+)$"
+    a, b, c, d = tonumber(a), tonumber(b), tonumber(c), tonumber(d)
+    return cipher_iv .. cipher:update(schar(1, a, b, c, d, band(port, 0xFF00) / 0x100, band(port, 0xFF)))
+end
 
-print(chunk)
-print(decipher:update(chunk))
+global_worker = {}
+
+function worker_init(pid)
+    local cipher, cipher_iv = create_cipher('aes-256-cfb', 'Mima4123', true)
+    global_worker[pid] = {
+        send_iv=false, 
+        cipher = cipher,
+        iv = cipher_iv,
+        decipher = nil,
+        create_decipher = function (self, iv)
+            self.decipher = create_cipher('aes-256-cfb', 'Mima4123', false, iv)
+        end
+    }
+end
+
+function worker_terminate(pid)
+    global_worker[pid] = nil
+end
+
+
+function send_data(pid, ssaddr, chunk)
+    local worker = global_worker[pid]
+
+    if worker == nil then
+        assert(false) 
+    end
+
+    local cipherdata = worker.cipher:update(ssaddr .. chunk)
+    --print('before')
+    --print(ssaddr..chunk)
+    if #cipherdata > 0 then
+        if worker.send_iv then
+            return cipherdata
+        else
+            --local tt = create_cipher('aes-256-cfb', 'Mima4123', false, worker.iv)
+            --print('after')
+            --print(tt:update(cipherdata))
+            worker.send_iv = true
+            return worker.iv .. cipherdata
+        end
+    end
+end
+
+function recv_data(pid, chunk)
+    local worker = global_worker[pid]
+    if worker == nil then
+        assert(false) 
+    end
+
+    if worker.decipher then
+        chunk = worker.decipher:update(chunk)
+        if #chunk > 0 then return chunk end 
+    else
+        if #chunk >= 16 then
+            worker:create_decipher(chunk:sub(1, 16))
+            if #chunk > 16 then
+                chunk = worker.decipher:update(chunk:sub(17, -1))
+                if #chunk > 0 then return chunk end
+            end
+        end
+    end
+end
+
+--decipher = create_cipher('aes-256-cfb', 'Mima4123', false, cipher_iv)
+--
+--print(chunk)
+--print(decipher:update(chunk))
+
 

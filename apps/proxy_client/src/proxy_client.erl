@@ -50,6 +50,7 @@ setup_logicvm_by_name(Name, RootLuaModule, LuaModule) ->
 
 
 start(_StartType, _StartArgs) ->
+    lager:set_loglevel(lager_console_backend, debug),
     create_luavm(),
     proxy_client_sup:start_link().
 
@@ -57,5 +58,6 @@ stop(_State) ->
     ok.
 
 start() ->
+    application:start(lager),
     application:start(moon),
     application:start(?MODULE).

@@ -24,7 +24,8 @@
                 server_sock,
                 client_ip,
                 client_port,
-                client_sock
+                client_sock,
+                ss_addr = none
                }).
 
 -define(SOCK_OPTIONS,
@@ -81,9 +82,12 @@ init(Conf) ->
     ClientIP = proplists:get_value(listen_ip, Conf),
     ClientPort = proplists:get_value(listen_port, Conf),
     Client = proplists:get_value(client_sock, Conf),
+
+    %%lager:debug("conf:~p",[Conf]),
     case gen_tcp:connect(getaddr_or_fail(ServerIP), ServerPort, ?SOCK_OPTIONS) of
         {ok, RemoteSocket} ->
-            %%send to remote shadowsocks
+            %%连接远端服务器成功
+            moon:call(luavm, "worker_init", [pid_to_binary(self())]),
             ok = inet:setopts(RemoteSocket, [{active, true}]),
             {ok, #state{server_ip=ServerIP,
                         server_port=ServerPort,
@@ -93,7 +97,7 @@ init(Conf) ->
                         client_sock=Client}, 0};
                  %%communicate(Client, RemoteSocket);
         {error, Error} ->
-            ?LOG("Connect error, ~p. ~p:~p~n", [Error, ServerIP, ServerPort]),
+            lager:debug("Connect error, ~p. ~p:~p", [Error, ServerIP, ServerPort]),
             gen_tcp:close(Client),
             {stop, server_connect_fail}
     end.
@@ -144,12 +148,11 @@ handle_info(timeout, #state{server_sock=RemoteSocket, client_sock=Client, client
 %    try
         case find_target(Client) of
             {ok, Mod, {connect, Addr}} ->
-                Target = encode_addr(Addr),
-                ok = gen_tcp:send(RemoteSocket, proxy_transform:transform(Target)),
+                %%lager:debug("addr:~p", [Addr]),
                 ok = inet:setopts(Client, [{active, true}]),
                 IP = list_to_binary(tuple_to_list(getaddr_or_fail(LocalIP))),
                 ok = gen_tcp:send(Client, Mod:unparse_connection_response({granted, {ipv4, IP, LocalPort}})),
-                {noreply, State};
+                {noreply, State#state{ss_addr=encode_addr(Addr)}};
             {error, client_closed} ->
                 {stop, normal, State};
             {error, Reason} ->
@@ -163,15 +166,19 @@ handle_info(timeout, #state{server_sock=RemoteSocket, client_sock=Client, client
     %%         ?LOG("client recv error, ~p: ~p~n", [_Error, _Reason]),
     %%         {stop, normal, State}
     end;
-handle_info({tcp, Client, Request}, #state{server_sock=RemoteSocket, client_sock=Client} = State) ->
-    case gen_tcp:send(RemoteSocket, proxy_transform:transform(Request)) of
+handle_info({tcp, Client, Request}, #state{server_sock=RemoteSocket, client_sock=Client, ss_addr=SSAddr} = State) ->
+    {ok, Data} = moon:call(luavm, send_data, [pid_to_binary(self()), SSAddr, Request]),
+    lager:debug("send:~p", [Data]),
+    case gen_tcp:send(RemoteSocket, Data) of
         ok ->
             {noreply, State};
         {error, _Error} ->
             {stop, _Error, State}
     end;
 handle_info({tcp, RemoteSocket, Response}, #state{server_sock=RemoteSocket, client_sock=Client} = State) ->
-    case gen_tcp:send(Client, proxy_transform:transform(Response)) of
+    {ok, Data} = moon:call(luavm, recv_data, [pid_to_binary(self()), Response]),
+    lager:debug("response:~p", [Data]),
+    case gen_tcp:send(Client, Data) of
         ok ->
             {noreply, State};
         {error, _Error} ->
@@ -182,6 +189,7 @@ handle_info({tcp_closed, ASocket}, #state{server_sock=RemoteSocket, client_sock=
         Client ->
             {stop, normal, State};
         RemoteSocket ->
+            lager:debug("remote server tcp close"),
             {stop, normal, State}
     end;
 handle_info({tcp_error, ASocket, _Reason}, #state{server_sock=RemoteSocket, client_sock=Client} = State) ->
@@ -209,6 +217,7 @@ handle_info(_Info, State) ->
 %% @end
 %%--------------------------------------------------------------------
 terminate(_Reason,  #state{server_sock=RemoteSocket, client_sock=Client}) ->
+    {ok, _} = moon:call(luavm, "worker_terminate", [pid_to_binary(self())]),
     gen_tcp:close(RemoteSocket),
     gen_tcp:close(Client),
     ok;
@@ -267,11 +276,19 @@ socks_proxy_handshake(Client, Version, Greeting) ->
             end
     end.
 
+pid_to_binary(Pid) ->
+    list_to_binary(pid_to_list(Pid)).
+
+encode_ss({Iv, Addr, Data}) ->
+    <<Iv/binary, Addr/binary, Data/binary>>;
+encode_ss({Addr, Data}) ->
+    <<Addr/binary, Data/binary>>.
+
 encode_addr({ipv4, Address, Port}) ->
-    <<?IPV4, Port:16, Address:32>>;
+    <<1:8, Address:32, Port:16>>;
 encode_addr({ipv6, Address, Port}) ->
-    <<?IPV6, Port:16, Address:128>>;
+    <<4:8, Address:128, Port:16>>;
 encode_addr({domain, DomainBin, Port}) ->
-    <<?DOMAIN, Port:16, (byte_size(DomainBin)):8, DomainBin/binary>>;
+    <<3:8/little, (byte_size(DomainBin)):8, DomainBin/binary, Port:16>>;
 encode_addr(_) ->
     error.
