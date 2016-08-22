@@ -87,7 +87,7 @@ init(Conf) ->
     case gen_tcp:connect(getaddr_or_fail(ServerIP), ServerPort, ?SOCK_OPTIONS) of
         {ok, RemoteSocket} ->
             %%连接远端服务器成功
-            moon:call(luavm, "worker_init", [pid_to_binary(self())]),
+            {ok, _} = moon:call(luavm, "worker_init", [pid_to_binary(self())]),
             ok = inet:setopts(RemoteSocket, [{active, true}]),
             {ok, #state{server_ip=ServerIP,
                         server_port=ServerPort,

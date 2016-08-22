@@ -25,24 +25,21 @@ crypto=require 'crypto'
 
 local bxor, band, schar = (bit or bit32).bxor, (bit or bit32).band, string.char
 
-function random_string(length)
-	local buffer = {}
-	for i = 1, length do buffer[i] = math.random(0, 255) end
-	return schar(unpack(buffer))
+function RandomString(length)
+    local buffer = {}
+    for i = 1, length do buffer[i] = math.random(0, 255) end
+    return schar(unpack(buffer))
 end
 
-function evp_bytestokey(password, key_len, iv_len)
-	local key = string.format("%s-%d-%d", password, key_len, iv_len)
-	local m, i = {}, 0
-	while #(table.concat(m)) < key_len + iv_len do
-		local data = password
-		if i > 0 then data = m[i] .. password end
-		m[#m + 1], i = crypto.digest("md5", data, true), i + 1
-	end
-	local ms = table.concat(m)
-	local key = ms:sub(1, key_len)
-	local iv = ms:sub(key_len + 1, iv_len)
-	return key, iv
+function evp_bytestokey(password, key_len)
+    local m, i = {}, 0
+    while #(table.concat(m)) < key_len do
+        local data = password
+        if i > 0 then data = m[i] .. password end
+        m[#m + 1], i = crypto.digest("md5", data, true), i + 1
+    end
+    local ms = table.concat(m)
+    return ms:sub(1, key_len)
 end
 
 function newRC4MD5Stream(cipher, key, iv, enc)
@@ -53,9 +50,9 @@ function newRC4MD5Stream(cipher, key, iv, enc)
     return wtf.new("rc4", md5:final(nil, true), "")
 end
 
-function newAESStream(cipher, key, iv, enc)
+function newAESStream(method, key, iv, enc)
     local wtf = enc and crypto.encrypt or crypto.decrypt
-    return wtf.new(cipher, key, iv)
+    return wtf.new(method, key, iv)
 end
 
 cipherMethod = {
@@ -70,14 +67,14 @@ cipherMethod = {
     --["salsa20"]     = {32, 8, newSalsa20Stream},
 }
 
-function create_cipher(cipher, password, enc, iv)
-    local method = cipherMethod[cipher] 
-    local keyLen = method[1]
-    local ivLen = method[2]
-    local key_ = evp_bytestokey(password, keyLen, ivLen)
-    local cipher_iv = iv and iv or random_string(ivLen)
+function create_cipher(method, password, enc, iv)
+    local cipher = cipherMethod[method] 
+    local keyLen = cipher[1]
+    local ivLen = cipher[2]
+    local key_ = evp_bytestokey(password, keyLen)
+    local cipher_iv = iv and iv or RandomString(ivLen)
 
-    return method[3](cipher, key_, cipher_iv, enc), cipher_iv
+    return cipher[3](method, key_, cipher_iv, enc), cipher_iv
 end
 
 --cipher:update("12345")
@@ -132,6 +129,7 @@ function send_data(pid, ssaddr, chunk)
     end
 
     local cipherdata = worker.cipher:update(ssaddr .. chunk)
+    cipherdata = cipherdata .. worker.cipher:final()
     --print('before')
     --print(ssaddr..chunk)
     
@@ -165,14 +163,19 @@ function recv_data(pid, chunk)
 
     if worker.decipher then
         chunk = worker.decipher:update(chunk)
+        chunk=chunk..worker.decipher:final()
         --if #chunk > 0 then return chunk end 
         print(pid, 'has decipher') 
         return chunk
     else
+        if #chunk < 16 then
+            assert(false)
+        end
         if #chunk >= 16 then
             worker:create_decipher(chunk:sub(1, 16))
             if #chunk > 16 then
                 chunk = worker.decipher:update(chunk:sub(17, -1))
+                chunk = chunk.. worker.decipher:final()
                 --if #chunk > 0 then return chunk end
                 print(pid, 'create decipher') 
                 return chunk
