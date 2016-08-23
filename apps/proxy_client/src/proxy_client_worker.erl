@@ -87,7 +87,8 @@ init(Conf) ->
     case gen_tcp:connect(getaddr_or_fail(ServerIP), ServerPort, ?SOCK_OPTIONS) of
         {ok, RemoteSocket} ->
             %%连接远端服务器成功
-            {ok, _} = moon:call(luavm, "worker_init", [pid_to_binary(self())]),
+            {ok, Return} = moon:call(luavm, "worker_init", [pid_to_binary(self())]),
+            lager:debug("return:~p, ~p", [self(), Return]),
             ok = inet:setopts(RemoteSocket, [{active, true}]),
             {ok, #state{server_ip=ServerIP,
                         server_port=ServerPort,
@@ -144,7 +145,7 @@ handle_cast(_Msg, State) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_info(timeout, #state{server_sock=_, client_sock=Client, client_ip=LocalIP, client_port=LocalPort} = State) ->
+handle_info(timeout, #state{server_sock=RemoteSocket, client_sock=Client, client_ip=LocalIP, client_port=LocalPort} = State) ->
 %    try
         case find_target(Client) of
             {ok, Mod, {connect, Addr}} ->
@@ -152,7 +153,8 @@ handle_info(timeout, #state{server_sock=_, client_sock=Client, client_ip=LocalIP
                 SSAddr = encode_addr(Addr),
                 ok = inet:setopts(Client, [{active, true}]),
                 IP = list_to_binary(tuple_to_list(getaddr_or_fail(LocalIP))),
-                %%ok=gen_tcp:send(Client, <<16#05:8, 16#00:8>>),
+                {ok, Data} = moon:call(luavm, send_data, [pid_to_binary(self()), SSAddr]),
+                ok=gen_tcp:send(RemoteSocket, Data),
                 ok = gen_tcp:send(Client, Mod:unparse_connection_response({granted, {ipv4, IP, LocalPort}})),
                 {noreply, State#state{ss_addr=SSAddr}};
             {error, client_closed} ->
@@ -170,7 +172,7 @@ handle_info(timeout, #state{server_sock=_, client_sock=Client, client_ip=LocalIP
     end;
 handle_info({tcp, Client, Request}, #state{server_sock=RemoteSocket, client_sock=Client, ss_addr=SSAddr} = State) ->
     lager:debug("send:~p", [Request]),
-    {ok, Data} = moon:call(luavm, send_data, [pid_to_binary(self()), encode_ss({SSAddr, Request})]),
+    {ok, Data} = moon:call(luavm, send_data, [pid_to_binary(self()), Request]),
     case gen_tcp:send(RemoteSocket, Data) of
         ok ->
             {noreply, State};
