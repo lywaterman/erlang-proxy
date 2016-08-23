@@ -116,8 +116,9 @@ function get_recv_data(pid)
     if worker == nil then
         assert(false) 
     end
-
-    return worker.recv_data
+    local str = worker.recv_data
+    worker.recv_data = ''
+    return str
 end
 
 
