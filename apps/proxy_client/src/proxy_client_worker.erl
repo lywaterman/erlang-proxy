@@ -15,8 +15,17 @@
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-         terminate/2, code_change/3]).
+         terminate/2, code_change/3, start_process/2]).
 
+-define(TIMEOUT, 10000).
+-define(SOCK_OPTIONS,
+        [binary,
+         {reuseaddr, true},
+         {active, false},
+         {nodelay, true}
+        ]).
+
+-define(CONNECT_RETRY_TIMES, 2).
 -define(SERVER, ?MODULE).
 
 -record(state, {server_ip,
@@ -25,15 +34,9 @@
                 client_ip,
                 client_port,
                 client_sock,
+                direct_pid = none,
                 ss_addr = none
                }).
-
--define(SOCK_OPTIONS,
-        [binary,
-         {reuseaddr, true},
-         {active, false},
-         {nodelay, true}
-        ]).
 
 -include("proxy_defs.hrl").
 
@@ -149,14 +152,24 @@ handle_info(timeout, #state{server_sock=RemoteSocket, client_sock=Client, client
 %    try
         case find_target(Client) of
             {ok, Mod, {connect, Addr}} ->
-                %%lager:debug("addr:~p", [Addr]),
                 SSAddr = encode_addr(Addr),
                 ok = inet:setopts(Client, [{active, true}]),
+                
+                {ok, Direct} = moon:call(luavm, check_is_direct, [Addr]),
+                
+                %%lager:debug("addr:~p, direct:~p", [Addr, Direct]),
+                {_, DirectPid} = case Direct of
+                    true -> 
+                        {Pid, _} = spawn_monitor(proxy_client_worker, start_process, [Client, Addr]),
+                        {true, Pid};
+                    _ ->
+                        {ok, Data} = moon:call(luavm, send_data, [pid_to_binary(self()), SSAddr]),
+                        ok=gen_tcp:send(RemoteSocket, Data),
+                        {false, none}
+                end,
                 IP = list_to_binary(tuple_to_list(getaddr_or_fail(LocalIP))),
-                {ok, Data} = moon:call(luavm, send_data, [pid_to_binary(self()), SSAddr]),
-                ok=gen_tcp:send(RemoteSocket, Data),
                 ok = gen_tcp:send(Client, Mod:unparse_connection_response({granted, {ipv4, IP, LocalPort}})),
-                {noreply, State#state{ss_addr=SSAddr}};
+                {noreply, State#state{ss_addr=SSAddr, direct_pid=DirectPid}};
             {error, client_closed} ->
                 {stop, normal, State};
             {error, Reason} ->
@@ -170,14 +183,21 @@ handle_info(timeout, #state{server_sock=RemoteSocket, client_sock=Client, client
     %%         ?LOG("client recv error, ~p: ~p~n", [_Error, _Reason]),
     %%         {stop, normal, State}
     end;
-handle_info({tcp, Client, Request}, #state{server_sock=RemoteSocket, client_sock=Client, ss_addr=SSAddr} = State) ->
+handle_info({tcp, Client, Request}, #state{server_sock=RemoteSocket, client_sock=Client, ss_addr=SSAddr, direct_pid=Pid} = State) ->
     %%lager:debug("send:~p", [Request]),
-    {ok, Data} = moon:call(luavm, send_data, [pid_to_binary(self()), Request]),
-    case gen_tcp:send(RemoteSocket, Data) of
-        ok ->
-            {noreply, State};
-        {error, _Error} ->
-            {stop, _Error, State}
+    
+    case Pid of 
+        none ->
+            {ok, Data} = moon:call(luavm, send_data, [pid_to_binary(self()), Request]),
+            case gen_tcp:send(RemoteSocket, Data) of
+                ok ->
+                    {noreply, State};
+                {error, _Error} ->
+                    {stop, _Error, State}
+            end;
+        _ ->
+            Pid ! {tcp, Client, Request},
+            {noreply, State}
     end;
 handle_info({tcp, RemoteSocket, Response}, #state{server_sock=RemoteSocket, client_sock=Client} = State) ->
     %%lager:debug("response:~p", [Response]),
@@ -193,10 +213,10 @@ handle_info({tcp, RemoteSocket, Response}, #state{server_sock=RemoteSocket, clie
 handle_info({tcp_closed, ASocket}, #state{server_sock=RemoteSocket, client_sock=Client} = State) ->
     case ASocket of
         Client ->
-            lager:debug("client server tcp close"),
+            %%lager:debug("client server tcp close"),
             {stop, normal, State};
         RemoteSocket ->
-            lager:debug("remote server tcp close"),
+            %%lager:debug("remote server tcp close"),
             {stop, normal, State}
     end;
 handle_info({tcp_error, ASocket, _Reason}, #state{server_sock=RemoteSocket, client_sock=Client} = State) ->
@@ -286,11 +306,6 @@ socks_proxy_handshake(Client, Version, Greeting) ->
 pid_to_binary(Pid) ->
     list_to_binary(pid_to_list(Pid)).
 
-encode_ss({Iv, Addr, Data}) ->
-    <<Iv/binary, Addr/binary, Data/binary>>;
-encode_ss({Addr, Data}) ->
-    <<Addr/binary, Data/binary>>.
-
 encode_addr({ipv4, Address, Port}) ->
     <<1:8, Address:32, Port:16>>;
 encode_addr({ipv6, Address, Port}) ->
@@ -299,3 +314,82 @@ encode_addr({domain, DomainBin, Port}) ->
     <<3:8/little, (byte_size(DomainBin)):8, DomainBin/binary, Port:16>>;
 encode_addr(_) ->
     error.
+
+
+start_process(Client, Addr) ->
+    parse_address(Client, Addr).
+
+parse_address(Client, {ipv4, Address, Port}) ->
+    Destination = <<Address:32>>,
+    Address = list_to_tuple( binary_to_list(Destination) ),
+    communicate(Client, Address, Port);
+
+parse_address(Client, {ipv6, Address, Port}) ->
+    Destination = <<Address:128>>,
+    Address = list_to_tuple( binary_to_list(Destination) ),
+    communicate(Client, Address, Port);
+
+parse_address(Client, {domain, DomainBin, Port}) ->
+    Address = binary_to_list(DomainBin),
+    communicate(Client, Address, Port);
+
+parse_address(Client, _AType) ->
+    %% receive the invalid data. close the connection
+    ?LOG("Invalid data!~n", []),
+    gen_tcp:close(Client).
+
+
+communicate(Client, Address, Port) ->
+    %%lager:debug("Address: ~p, Port: ~p~n", [Address, Port]),
+
+    case connect_target(Address, Port, ?CONNECT_RETRY_TIMES) of
+        {ok, TargetSocket} ->
+            transfer(Client, TargetSocket);
+        error ->
+            ?LOG("Connect Address Error: ~p:~p~n", [Address, Port]),
+            gen_tcp:close(Client)
+    end.
+
+connect_target(_, _, 0) ->
+    error;
+connect_target(Address, Port, Times) ->
+    case gen_tcp:connect(Address, Port, ?SOCK_OPTIONS, ?TIMEOUT) of
+        {ok, TargetSocket} ->
+            {ok, TargetSocket};
+        {error, _Error} ->
+            connect_target(Address, Port, Times-1)
+    end.
+
+
+transfer(Client, Remote) ->
+    inet:setopts(Remote, [{active, once}]),
+    receive
+        {tcp, Client, Request} ->
+            case gen_tcp:send(Remote, Request) of
+                ok ->
+                    transfer(Client, Remote);
+                {error, _Error} ->
+                    ok
+            end;
+        {tcp, Remote, Response} ->
+            %% client maybe close the connection when data transferring
+            case gen_tcp:send(Client, Response) of
+                ok ->
+                    transfer(Client, Remote);
+                {error, _Error} ->
+                    ok
+            end;
+        {tcp_closed, Client} ->
+            ok;
+        {tcp_closed, Remote} ->
+            ok;
+        {tcp_error, Client, _Reason} ->
+            ok;
+        {tcp_error, Remote, _Reason} ->
+            ok
+    end,
+
+    gen_tcp:close(Remote),
+    gen_tcp:close(Client),
+    ok.
+

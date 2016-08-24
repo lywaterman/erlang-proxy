@@ -138,6 +138,29 @@ function get_recv_data(pid)
     return str
 end
 
+function check_is_direct(addr)
+    --print_r(addr)
+    local result, err 
+
+    if addr[1] == 'ipv4' then 
+        result, err =  geodb_country:query_by_ipnum(addr[2])
+    elseif addr[1] == 'domain' then
+        result, err =  geodb_country:query_by_name(addr[2])
+    else
+        assert(false)
+    end
+
+    --print_r(result)
+    if not result and err ~= "not found" then
+        return false 
+    end
+    
+    if result.code == 'CN' then
+        return true
+    end
+
+    return false
+end
 
 function send_data(pid, payload)
     local worker = global_worker[pid]
