@@ -88,7 +88,7 @@ init(Conf) ->
         {ok, RemoteSocket} ->
             %%连接远端服务器成功
             {ok, Return} = moon:call(luavm, "worker_init", [pid_to_binary(self())]),
-            lager:debug("return:~p, ~p", [self(), Return]),
+            %%lager:debug("return:~p, ~p", [self(), Return]),
             ok = inet:setopts(RemoteSocket, [{active, true}]),
             {ok, #state{server_ip=ServerIP,
                         server_port=ServerPort,
@@ -149,7 +149,7 @@ handle_info(timeout, #state{server_sock=RemoteSocket, client_sock=Client, client
 %    try
         case find_target(Client) of
             {ok, Mod, {connect, Addr}} ->
-                lager:debug("addr:~p", [Addr]),
+                %%lager:debug("addr:~p", [Addr]),
                 SSAddr = encode_addr(Addr),
                 ok = inet:setopts(Client, [{active, true}]),
                 IP = list_to_binary(tuple_to_list(getaddr_or_fail(LocalIP))),
@@ -171,7 +171,7 @@ handle_info(timeout, #state{server_sock=RemoteSocket, client_sock=Client, client
     %%         {stop, normal, State}
     end;
 handle_info({tcp, Client, Request}, #state{server_sock=RemoteSocket, client_sock=Client, ss_addr=SSAddr} = State) ->
-    lager:debug("send:~p", [Request]),
+    %%lager:debug("send:~p", [Request]),
     {ok, Data} = moon:call(luavm, send_data, [pid_to_binary(self()), Request]),
     case gen_tcp:send(RemoteSocket, Data) of
         ok ->
@@ -180,9 +180,9 @@ handle_info({tcp, Client, Request}, #state{server_sock=RemoteSocket, client_sock
             {stop, _Error, State}
     end;
 handle_info({tcp, RemoteSocket, Response}, #state{server_sock=RemoteSocket, client_sock=Client} = State) ->
-    lager:debug("response:~p", [Response]),
+    %%lager:debug("response:~p", [Response]),
     {ok, Data} = moon:call(luavm, recv_data, [pid_to_binary(self()), Response]),
-    lager:debug("after decrypt:~p", [Data]),
+    %%lager:debug("after decrypt:~p", [Data]),
     case gen_tcp:send(Client, Data) of
         ok ->
             %%{stop, 1, State};

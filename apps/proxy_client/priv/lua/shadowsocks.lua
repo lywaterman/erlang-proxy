@@ -136,13 +136,13 @@ function send_data(pid, payload)
     
     --if #cipherdata > 0 then
         if worker.send_iv then
-            print(pid, 'send no iv')
+            --print(pid, 'send no iv')
             return cipherdata
         else
             --local tt = create_cipher('aes-256-cfb', 'Mima4123', false, worker.iv)
             --print('after')
             --print(tt:update(cipherdata))
-            print(pid, 'send iv')
+            --print(pid, 'send iv')
             worker.send_iv = true
             return worker.iv .. cipherdata
         end
@@ -166,7 +166,7 @@ function recv_data(pid, chunk)
         chunk = worker.decipher:update(chunk)
         chunk=chunk..worker.decipher:final()
         --if #chunk > 0 then return chunk end 
-        print(pid, 'has decipher') 
+        --print(pid, 'has decipher') 
         return chunk
     else
         if #chunk < 16 then
@@ -178,7 +178,7 @@ function recv_data(pid, chunk)
                 chunk = worker.decipher:update(chunk:sub(17, -1))
                 chunk = chunk.. worker.decipher:final()
                 --if #chunk > 0 then return chunk end
-                print(pid, 'create decipher') 
+                --print(pid, 'create decipher') 
                 return chunk
             else
                 return ''
