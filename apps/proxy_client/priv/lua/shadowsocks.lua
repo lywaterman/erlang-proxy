@@ -24,14 +24,14 @@ function _G.print_r (t, name, indent)
 crypto=require 'crypto'
 local geoip = require 'geoip'
 local geoip_country = require 'geoip.country'
-local geoip_city = require 'geoip.city'
 local geoip_country_filename = luapath .. "/GeoIP.dat"
-local geoip_city_filename = luapath .. "/GeoLiteCity.dat"
 
+--local geoip_city = require 'geoip.city'
+--local geoip_city_filename = luapath .. "/GeoLiteCity.dat"
+
+--local geodb_city = geoip_city.open(geoip_city_filename, geoip.MEMORY_CACHE)
 local geodb_country = geoip_country.open(geoip_country_filename, geoip.MEMORY_CACHE)
-local geodb_city = geoip_city.open(geoip_city_filename, geoip.MEMORY_CACHE)
-
-local result, err =  geodb_city:query_by_addr("125.71.135.103")
+local result, err =  geodb_country:query_by_addr("125.71.135.103")
 
 print_r(result)
 if not result and err ~= "not found" then
